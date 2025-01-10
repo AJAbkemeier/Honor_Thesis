@@ -131,7 +131,7 @@ sp500_rw.sd_rp <- 0.02
 sp500_rw.sd_ivp <- 0.1
 sp500_cooling.fraction50 <- 0.5
 
-# Filter POMP to data -----------------------------------------------------
+# Filter POMP to data ----------------------------------------------------
 
 sp500_rw.sd <- rw_sd(
   mu = sp500_rw.sd_rp,
@@ -166,30 +166,37 @@ global_starts <- pomp::runif_design(
 )
 
 # Feller's Condition
-global_starts$xi <- runif(n=nrow(global_starts), min=0, max=sqrt(global_starts$kappa * global_starts$theta *2)) #kappa<2*xi*theta
+global_starts$xi <- runif(
+	n=nrow(global_starts), 
+	min=0, 
+	max=sqrt(global_starts$kappa * global_starts$theta *2)
+) #kappa<2*xi*theta
 
 stew(file=sprintf("ENTER_FILE_NAME.rds"),{
   t.box <- system.time({
-    if.box <- foreach(i=1:sp500_Nreps_global,.packages='pomp',.combine=c,
-                      .options.multicore=list(set.seed=TRUE)) %dopar%  {
-                        mif2(
-                          sp500.filt,
-                          Nmif = sp500_Nmif,
-                          rw.sd = sp500_rw.sd,
-                          cooling.fraction.50 = sp500_cooling.fraction50,
-                          Np = sp500_Np,
-                          params=unlist(global_starts[i, ])
-                        )
-                      } # if.box contains all estimates of parameters (list of mif objects)
-    
-    L.box <- foreach(i=1:sp500_Nreps_global,.packages='pomp',.combine=rbind,
-                     .options.multicore=list(set.seed=TRUE)) %dopar% {
-                       logmeanexp(
-                         replicate(sp500_Nreps_eval,
-                                   logLik(pfilter(sp500.filt,params=coef(if.box[[i]]),Np=sp500_Np))
-                         ), 
-                         se=TRUE)
-                     } # matrix containing logLik and SE for each time 
+    if.box <- foreach(
+			i=1:sp500_Nreps_global,.packages='pomp',
+			.combine=c,
+      .options.multicore=list(set.seed=TRUE)
+		) %dopar% {
+      mif2(
+      	sp500.filt,
+        Nmif = sp500_Nmif,
+        rw.sd = sp500_rw.sd,
+        cooling.fraction.50 = sp500_cooling.fraction50,
+        Np = sp500_Np,
+        params=unlist(global_starts[i, ])
+      )
+    } # if.box contains all estimates of parameters (list of mif objects)
+    L.box <- foreach(
+			i=1:sp500_Nreps_global,.packages='pomp',
+			.combine=rbind,
+      .options.multicore=list(set.seed=TRUE)
+		) %dopar% {
+			replicate(sp500_Nreps_eval,
+      	logLik(pfilter(sp500.filt,params=coef(if.box[[i]]),Np=sp500_Np))
+      ) |> logmeanexp(se = TRUE)
+    } # matrix containing logLik and SE for each time 
   })
 })
 
