@@ -6,6 +6,8 @@ library(doRNG)
 library(tidyverse)
 
 cores <-  as.numeric(Sys.getenv('SLURM_NTASKS_PER_NODE', unset=NA))
+run_level <-  as.numeric(Sys.getenv('run_level', unset=NA))
+
 if(is.na(cores)) cores <- detectCores()  
 registerDoParallel(cores)
 registerDoRNG(34118892)
@@ -139,11 +141,9 @@ sp500_rw.sd <- rw_sd(
   kappa = sp500_rw.sd_rp,
   xi = sp500_rw.sd_rp,
   rho = sp500_rw.sd_rp,
-  lambda = sp500_rw.sd_rp,
   V_0 = ivp(sp500_rw.sd_ivp)
 )
 
-run_level <- 4
 sp500_Np <-           switch(run_level, 100,  200, 500, 1000)
 sp500_Nmif <-         switch(run_level,  10,  25,  50, 200)
 sp500_Nreps_eval <-   switch(run_level,   4,  7,   10,  24)
@@ -156,7 +156,7 @@ sp500_box <- rbind(
   kappa =c(1e-8,0.1),
   xi = c(1e-8,1e-2),
   rho = c(1e-8,1),
-  V_0=c(1e-10,1e-4),
+  V_0=c(1e-10,1e-4)
 )
 
 global_starts <- pomp::runif_design(
@@ -172,9 +172,9 @@ global_starts$xi <- runif(
 	max=sqrt(global_starts$kappa * global_starts$theta *2)
 ) #kappa<2*xi*theta
 
-stew(file=sprintf("ENTER_FILE_NAME.rds"),{
-  t.box <- system.time({
-    if.box <- foreach(
+stew(file=sprintf("1d_global_search/1d_global_search.rds"),{
+	t.box <- system.time({
+		if.box <- foreach(
 			i=1:sp500_Nreps_global,.packages='pomp',
 			.combine=c,
       .options.multicore=list(set.seed=TRUE)
