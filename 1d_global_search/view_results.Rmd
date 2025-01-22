@@ -1,0 +1,85 @@
+
+
+```{r setup}
+library(pomp)
+library(tidyverse)
+```
+
+# Intro
+
+For this document, we'd like to review the results of running 1d_global_search.R. We have a particular interest in thinking about how they compare to running the python version of this code, which seemingly didn't work well. Does this code maximize the LL better? Are the traces better-behaved?
+
+```{r}
+load("1d_global_search.rda")
+```
+
+# Results
+
+LL beats benchmarks mentioned in thesis, but doesn't reach the best LL in the thesis. It also falls short of the profile LLs without fixed mu in the thesis. The LLs don't crater as much as in the python code, and the best LL is larger than what was achieved in the python code despite using a larger box. 
+
+```{r LL summary}
+summary(L.box)
+```
+
+Best coefficients are generally notably different from the MLE in the thesis. 
+
+```{r Best coef}
+LL_df = as.data.frame(L.box)
+best_rep = which(LL_df$est == max(LL_df$est))
+
+coef(if.box[[best_rep]])
+```
+
+```{r}
+traces_long = lapply(seq_along(if.box), function(x){
+  tr = traces(if.box[[x]])
+  tr_long = tr |>
+    as.data.frame() |>
+    mutate(iter = 1:nrow(tr), rep = x) |>
+    pivot_longer(
+      names_to = "quantity", values_to = "value", cols = c(-iter, -rep)
+    )
+}) |> bind_rows()
+```
+
+The traces look better than those from pypomp. There are clear signs of traction for mu, rho, and xi. kappa, theta, and V_0 have traces which appear more aimless, but they don't veer off into oblivion like the pypomp traces.
+
+```{r}
+ggplot(
+  traces_long, 
+  aes(x = iter, y = value, group = rep, color = as.factor(rep), alpha = 0.2)
+) +
+  geom_line() +
+  facet_wrap(vars(quantity), scales = "free") +
+  theme(legend.position = "none")
+```
+
+```{r}
+traces_long |>
+  filter(quantity %in% c("kappa", "xi", "theta")) |>
+ggplot(
+  aes(x = iter, y = value, group = rep, color = as.factor(rep), alpha = 0.2)
+) +
+  geom_line() +
+  facet_wrap(vars(quantity), scales = "free") +
+  theme(legend.position = "none") +
+  scale_y_log10()
+```
+
+```{r}
+traces_long |>
+  filter(quantity == "loglik", iter > 15) |>
+ggplot(
+  aes(x = iter, y = value, group = rep, color = as.factor(rep), alpha = 0.2)
+) +
+  geom_line() +
+  facet_wrap(vars(quantity), scales = "free") +
+  theme(legend.position = "none")
+```
+
+# Conclusion
+
+As of writing this, running pfilter with this model at the thesis MLE doesn't match the thesis MLE LL, so it's possible that there is a mistake with this code. However, our re-calc of the R MLE LL roughly matches the python MLE LL, so the code might be wrong in the same way. If that's the case, then there is some issue in the fitting process of the python code, as this R code does a much better job of fitting the model. 
+
+
+

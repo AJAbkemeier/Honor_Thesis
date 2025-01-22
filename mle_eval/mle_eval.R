@@ -1,3 +1,4 @@
+# This is based on 1d_global_search.R but with the search part removed.
 library(pomp)
 library(mvtnorm)
 library(doParallel)
@@ -6,29 +7,29 @@ library(doRNG)
 library(tidyverse)
 
 cores <-  as.numeric(Sys.getenv('SLURM_NTASKS_PER_NODE', unset=NA))
-run_level <-  as.numeric(Sys.getenv('run_level', unset=NA))
+run_level <-  as.numeric(Sys.getenv('run_level', unset = 4))
 
-if(is.na(cores)) cores <- detectCores()  
+if(is.na(cores)) cores <- detectCores()
 registerDoParallel(cores)
 registerDoRNG(34118892)
 
 
 # Data Manipulation -------------------------------------------------------
 
-sp500_raw <- read.csv("SPX.csv")  
-sp500 <- sp500_raw%>% 
-  mutate(date = as.Date(Date)) %>% 
-  mutate(diff_days = difftime(date, min(date), units = 'day')) %>% 
-  mutate(time = as.numeric(diff_days)) %>% 
-  mutate(y = log(Close / lag(Close))) %>% 
-  select(time, y) %>% 
+sp500_raw <- read.csv("SPX.csv")
+sp500 <- sp500_raw%>%
+  mutate(date = as.Date(Date)) %>%
+  mutate(diff_days = difftime(date, min(date), units = 'day')) %>%
+  mutate(time = as.numeric(diff_days)) %>%
+  mutate(y = log(Close / lag(Close))) %>%
+  select(time, y) %>%
   drop_na()
 
 
 # Name of States and Parmeters --------------------------------------------
 
 sp500_statenames <- c("V", "S")
-sp500_rp_names <- c("mu", "kappa", "theta", "xi", "rho") 
+sp500_rp_names <- c("mu", "kappa", "theta", "xi", "rho")
 sp500_ivp_names <- c("V_0")
 sp500_parameters <- c(sp500_rp_names, sp500_ivp_names)
 sp500_covarnames <- "covaryt"
@@ -38,19 +39,19 @@ sp500_covarnames <- "covaryt"
 
 rproc1 <- "
   double dWv, dZ, dWs, rt;
-  
+
   rt=covaryt;
   dWs = (rt-mu+0.5*V)/(sqrt(V));
   dZ = rnorm(0, 1);
-  
+
   dWv = rho * dWs + sqrt(1 - rho * rho) * dZ;
 
   S += S * (mu + sqrt(fmax(V, 0.0)) * dWs);
   V += xi*sqrt(V)*dWv;
-  
+
   if (V<=0) {
     V=1e-32;
-  } 
+  }
 "
 
 
@@ -69,14 +70,14 @@ sp500_rmeasure_filt <- "
 "
 
 sp500_rmeasure_sim <- "
-  y = (mu - 0.5 * V) + sqrt(V); 
+  y = (mu - 0.5 * V) + sqrt(V);
 "
 
 
 # dmeasure ----------------------------------------------------------------
 
 sp500_dmeasure <- "
-   lik=dnorm(y, mu-0.5*V, sqrt(V), give_log); 
+   lik=dnorm(y, mu-0.5*V, sqrt(V), give_log);
 "
 
 
@@ -129,75 +130,30 @@ sp500.filt <- pomp(
   partrans = sp500_partrans
 )
 
-# Fitting POMP to data
-sp500_rw.sd_rp <- 0.02
-sp500_rw.sd_ivp <- 0.1
-sp500_cooling.fraction50 <- 0.5
+mle_params <- c(
+  mu = 3.71e-4,
+  theta = 1.09e-4,
+  kappa = 3.25e-2,
+  V_0 = (7.86e-3)^2,
+  xi = 2.22e-3,
+  rho = -7.29e-1
+)
 
 # Filter POMP to data ----------------------------------------------------
 
-sp500_rw.sd <- rw_sd(
-  mu = sp500_rw.sd_rp,
-  theta = sp500_rw.sd_rp,
-  kappa = sp500_rw.sd_rp,
-  xi = sp500_rw.sd_rp,
-  rho = sp500_rw.sd_rp,
-  V_0 = ivp(sp500_rw.sd_ivp)
-)
-
 sp500_Np <-           switch(run_level, 100,  200, 500, 1000)
-sp500_Nmif <-         switch(run_level,  10,  25,  50, 200)
 sp500_Nreps_eval <-   switch(run_level,   4,  7,   10,  24)
-sp500_Nreps_local <-  switch(run_level,  10,  15,  20,  24)
+#sp500_Nreps_local <-  switch(run_level,  10,  15,  20,  24)
 sp500_Nreps_global <- switch(run_level,  10,  15,  20, 120)
 
-sp500_box <- rbind(
-  mu=c(1e-6,1e-4), 
-  theta = c(0.000075,0.0002),
-  kappa =c(1e-8,0.1),
-  xi = c(1e-8,1e-2),
-  rho = c(1e-8,1),
-  V_0=c(1e-10,1e-4)
-)
+# bake(file=sprintf("mle_eval/mle_eval.rds"),{
+#   L.box <- replicate(sp500_Nreps_eval,
+#     logLik(pfilter(sp500.filt, params = mle_params, Np = sp500_Np))
+#   ) |> logmeanexp(se = TRUE)
+# })
 
-global_starts <- pomp::runif_design(
-  lower = sp500_box[, 1],
-  upper = sp500_box[, 2],
-  nseq = sp500_Nreps_global
-)
-
-# Feller's Condition
-global_starts$xi <- runif(
-	n=nrow(global_starts), 
-	min=0, 
-	max=sqrt(global_starts$kappa * global_starts$theta *2)
-) #kappa<2*xi*theta
-
-stew(file=sprintf("1d_global_search/1d_global_search.rds"),{
-	t.box <- system.time({
-		if.box <- foreach(
-			i=1:sp500_Nreps_global,.packages='pomp',
-			.combine=c,
-      .options.multicore=list(set.seed=TRUE)
-		) %dopar% {
-      mif2(
-      	sp500.filt,
-        Nmif = sp500_Nmif,
-        rw.sd = sp500_rw.sd,
-        cooling.fraction.50 = sp500_cooling.fraction50,
-        Np = sp500_Np,
-        params=unlist(global_starts[i, ])
-      )
-    } # if.box contains all estimates of parameters (list of mif objects)
-    L.box <- foreach(
-			i=1:sp500_Nreps_global,.packages='pomp',
-			.combine=rbind,
-      .options.multicore=list(set.seed=TRUE)
-		) %dopar% {
-			replicate(sp500_Nreps_eval,
-      	logLik(pfilter(sp500.filt,params=coef(if.box[[i]]),Np=sp500_Np))
-      ) |> logmeanexp(se = TRUE)
-    } # matrix containing logLik and SE for each time 
-  })
-})
-
+replicate(sp500_Nreps_eval,
+  logLik(pfilter(sp500.filt, params = mle_params, Np = sp500_Np))
+) |> logmeanexp(se = TRUE)
+#          est           se
+#     11730.12    0.3399627
