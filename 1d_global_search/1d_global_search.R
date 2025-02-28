@@ -46,7 +46,7 @@ rproc1 <- "
   dWv = rho * dWs + sqrt(1 - rho * rho) * dZ;
 
   S += S * (mu + sqrt(fmax(V, 0.0)) * dWs);
-  V += xi*sqrt(V)*dWv;
+  V += kappa*(theta - V) + xi*sqrt(V)*dWv;
   
   if (V<=0) {
     V=1e-32;
